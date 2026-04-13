@@ -1,0 +1,33 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+logs/
+scraper.log
+
+# Database (ephemeral on cloud, but keep locally)
+database.db
+
+# Large raw CSV (filtered CSV is kept for seeding)
+gem_bids_delhi.csv
+
+# Scraper state
+.scraper_progress
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Gemini
+.gemini/
