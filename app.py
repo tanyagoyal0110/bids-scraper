@@ -214,7 +214,7 @@ def parse_date(date_str: str) -> datetime | None:
 
 
 def is_expiring(end_date_str: str) -> bool:
-    """Check if a bid's deadline is within the EXPIRING_HOURS threshold."""
+    """Check if a bid's end date is within the EXPIRING_HOURS threshold."""
     dt = parse_date(end_date_str)
     if dt is None:
         return False
@@ -293,7 +293,7 @@ with st.sidebar:
     )
 
     # Date filter
-    st.markdown("**Deadline range**")
+    st.markdown("**End Date range**")
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         date_from = st.date_input("From", value=None, key="date_from")
@@ -413,8 +413,8 @@ if df.empty:
 updates = {}
 
 # Column configuration for data_editor
-display_df = df[["bid_id", "title", "organization", "quantity",
-                 "start_date", "end_date", "bid_value", "scraped_at", "is_filled"]].copy()
+display_df = df[["is_filled", "bid_id", "title", "organization", "quantity",
+                 "start_date", "end_date", "bid_value", "scraped_at" ]].copy()
 
 # Add status badges as a column
 def make_status(row):
@@ -438,7 +438,7 @@ display_df = display_df.rename(columns={
     "organization": "Organization",
     "quantity":     "Qty",
     "start_date":   "Start Date",
-    "end_date":     "Deadline",
+    "end_date":     "End Date",
     "bid_value":    "Value",
     "scraped_at":   "Scraped At",
     "is_filled":    "Filled",
@@ -466,8 +466,8 @@ edited_df = st.data_editor(
         "Start Date": st.column_config.TextColumn(
             "Start Date", width="medium",
         ),
-        "Deadline": st.column_config.TextColumn(
-            "Deadline", width="medium",
+        "End Date": st.column_config.TextColumn(
+            "End Date", width="medium",
         ),
         "Value": st.column_config.TextColumn(
             "Value", width="small",
@@ -483,7 +483,7 @@ edited_df = st.data_editor(
         ),
     },
     disabled=["Status", "Bid ID", "Title", "Organization", "Qty",
-              "Start Date", "Deadline", "Value", "Scraped At"],
+              "Start Date", "End Date", "Value", "Scraped At"],
     hide_index=True,
     width="stretch",
     key="bid_table",
