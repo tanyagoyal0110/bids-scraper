@@ -2,9 +2,14 @@
 GeM Bid Pipeline — Database Layer
 ===================================
 SQLite helper for persistent bid storage, tracking, and querying.
+
+On Streamlit Cloud the filesystem is ephemeral, so the SQLite DB is rebuilt
+from gem_bids_filtered.csv on every boot.  The "is_filled" state is stored
+in filled_bids.json (committed to the repo) so it survives reboots.
 """
 
 import csv
+import json
 import sqlite3
 import logging
 from datetime import datetime, timedelta
@@ -12,9 +17,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import DATABASE_PATH, DB_TABLE, NEW_BID_HOURS
+from config import DATABASE_PATH, DB_TABLE, NEW_BID_HOURS, PROJECT_ROOT
 
 log = logging.getLogger("gem_database")
+
+# Path to the JSON file that persists "filled" state across reboots
+FILLED_JSON = PROJECT_ROOT / "filled_bids.json"
 
 # ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -58,6 +66,55 @@ def init_db():
         conn.execute(CREATE_INDEX_SQL)
         conn.commit()
         log.info("Database initialised: %s", DATABASE_PATH)
+    finally:
+        conn.close()
+
+
+# ─── Filled-State JSON Helpers ────────────────────────────────────────────────
+
+def load_filled_state() -> dict[str, bool]:
+    """Load the filled-bid tracking state from JSON file.
+    Returns a dict of {bid_id: True} for filled bids.
+    """
+    if not FILLED_JSON.exists():
+        return {}
+    try:
+        with open(FILLED_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+        return {k: bool(v) for k, v in data.items()}
+    except (json.JSONDecodeError, IOError):
+        log.warning("Could not read %s — starting with empty filled state.", FILLED_JSON)
+        return {}
+
+
+def save_filled_state(filled: dict[str, bool]):
+    """Persist the filled-bid state to JSON file.
+    Only saves bids that are True (filled) to keep the file small.
+    """
+    # Only store filled=True entries
+    to_save = {bid_id: True for bid_id, val in filled.items() if val}
+    with open(FILLED_JSON, "w", encoding="utf-8") as f:
+        json.dump(to_save, f, indent=2, sort_keys=True)
+    log.info("Saved filled state: %d bids marked as filled.", len(to_save))
+
+
+def apply_filled_state_to_db():
+    """Read filled_bids.json and apply the is_filled flags to the SQLite DB.
+    Called after CSV import to overlay the persisted state.
+    """
+    filled = load_filled_state()
+    if not filled:
+        return
+
+    conn = get_connection()
+    try:
+        for bid_id, is_filled in filled.items():
+            conn.execute(
+                f"UPDATE {DB_TABLE} SET is_filled = ? WHERE bid_id = ?",
+                (1 if is_filled else 0, bid_id),
+            )
+        conn.commit()
+        log.info("Applied filled state to DB: %d bids.", len(filled))
     finally:
         conn.close()
 
@@ -111,7 +168,7 @@ def upsert_bids(rows: list[dict]) -> int:
 
 def import_from_csv(csv_path: Path) -> int:
     """
-    One-time migration: read a filtered CSV and upsert all rows into SQLite.
+    Read a filtered CSV and upsert all rows into SQLite.
     Returns the number of newly inserted rows.
     """
     if not csv_path.exists():
@@ -124,6 +181,26 @@ def import_from_csv(csv_path: Path) -> int:
 
     log.info("Importing %d rows from %s", len(rows), csv_path.name)
     return upsert_bids(rows)
+
+
+def rebuild_db_from_csv(csv_path: Path) -> int:
+    """
+    Full rebuild: drop and re-import all bids from CSV, then apply
+    filled state from JSON.  Used on Streamlit Cloud where the DB
+    is ephemeral and needs to be rebuilt on every boot.
+    Returns the number of rows imported.
+    """
+    # Re-init schema (creates table if missing)
+    init_db()
+
+    # Import all bids from CSV
+    count = import_from_csv(csv_path)
+
+    # Overlay the filled state from JSON
+    apply_filled_state_to_db()
+
+    log.info("DB rebuild complete: %d bids imported, filled state applied.", count)
+    return count
 
 
 # ─── Query: All Bids ─────────────────────────────────────────────────────────
@@ -157,9 +234,13 @@ def update_filled(bid_id: str, is_filled: bool):
 
 
 def batch_update_filled(updates: dict[str, bool]):
-    """Batch-update filled status. updates = {bid_id: is_filled, ...}"""
+    """Batch-update filled status in both SQLite and the JSON file.
+    updates = {bid_id: is_filled, ...}
+    """
     if not updates:
         return
+
+    # Update SQLite
     conn = get_connection()
     try:
         for bid_id, filled in updates.items():
@@ -170,6 +251,11 @@ def batch_update_filled(updates: dict[str, bool]):
         conn.commit()
     finally:
         conn.close()
+
+    # Persist to JSON (merge with existing state)
+    current = load_filled_state()
+    current.update(updates)
+    save_filled_state(current)
 
 
 # ─── Stats ────────────────────────────────────────────────────────────────────

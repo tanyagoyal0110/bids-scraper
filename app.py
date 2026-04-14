@@ -4,10 +4,18 @@ GeM Bid Dashboard — Streamlit App
 Interactive dashboard for browsing, filtering, tracking, and managing
 GeM bids stored in the SQLite database.
 
+Data flow (Streamlit Community Cloud):
+  1. GitHub Actions scrapes bids on a cron schedule
+  2. The filtered CSV is auto-committed to the repo
+  3. Streamlit Cloud auto-redeploys, picking up the new CSV
+  4. This app rebuilds the in-memory SQLite DB from the CSV on boot
+  5. "Filled" state is persisted in filled_bids.json (committed to repo)
+
 Run:
     streamlit run app.py
 """
 
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -22,8 +30,7 @@ from config import (
     FILTERED_CSV,
 )
 from database import (
-    init_db,
-    import_from_csv,
+    rebuild_db_from_csv,
     get_all_bids,
     batch_update_filled,
     get_stats,
@@ -69,6 +76,18 @@ st.markdown("""
         color: rgba(255,255,255,0.6);
         font-size: 0.95rem;
         margin: 0.3rem 0 0 0;
+    }
+    .update-badge {
+        display: inline-block;
+        background: rgba(52, 211, 153, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(52, 211, 153, 0.3);
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        margin-top: 0.4rem;
     }
 
     /* ── Stat Cards ─────────────────────────────────────────── */
@@ -187,16 +206,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ─── Initialize DB ───────────────────────────────────────────────────────────
+# ─── Initialize DB from CSV ──────────────────────────────────────────────────
+# On Streamlit Cloud the SQLite DB is ephemeral.  We rebuild it from the
+# committed CSV every time the app boots, then overlay filled state from JSON.
 
-init_db()
-
-# Auto-import existing CSV on first load (if DB is empty)
-stats_check = get_stats()
-if stats_check["total"] == 0 and FILTERED_CSV.exists():
-    count = import_from_csv(FILTERED_CSV)
-    if count > 0:
-        st.toast(f"📥 Imported {count} existing bids from CSV", icon="✅")
+if FILTERED_CSV.exists():
+    rebuild_db_from_csv(FILTERED_CSV)
 
 
 # ─── Helper Functions ─────────────────────────────────────────────────────────
@@ -244,13 +259,23 @@ def get_category(title: str) -> str:
     return "Other"
 
 
+def get_csv_last_modified() -> str:
+    """Get the last-modified timestamp of the filtered CSV file."""
+    if FILTERED_CSV.exists():
+        mtime = FILTERED_CSV.stat().st_mtime
+        dt = datetime.fromtimestamp(mtime)
+        return dt.strftime("%d %b %Y, %I:%M %p")
+    return "Unknown"
+
 
 # ─── Header ───────────────────────────────────────────────────────────────────
 
-st.markdown("""
+last_updated = get_csv_last_modified()
+st.markdown(f"""
 <div class="main-header">
     <h1>📊 GeM Bid Tracker</h1>
     <p>Government e-Marketplace — Delhi Bid Monitoring Dashboard</p>
+    <div class="update-badge">🔄 Data last updated: {last_updated}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -261,7 +286,7 @@ with st.sidebar:
     st.markdown("## 🎛️ Controls")
 
     # Refresh Data button
-    if st.button("🔄 Refresh Data", width="stretch", type="primary"):
+    if st.button("🔄 Refresh Data", use_container_width=True, type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -305,6 +330,16 @@ with st.sidebar:
     # ── Stats ─────────────────────────────────────────────────
     st.markdown("## 📈 Quick Stats")
     stats = get_stats()
+
+    st.divider()
+
+    # ── Info ──────────────────────────────────────────────────
+    st.markdown("## ℹ️ Auto-Updates")
+    st.caption(
+        "Data is automatically refreshed every 12 hours via "
+        "GitHub Actions. The app redeploys with fresh data "
+        "after each scrape."
+    )
 
 
 # ─── Stat Cards Row ──────────────────────────────────────────────────────────
@@ -358,9 +393,9 @@ st.markdown("")
 
 if df.empty:
     st.info(
-        "No bids in database yet. Click **▶️ Run Pipeline** in the sidebar "
-        "to fetch bids, or place a `gem_bids_filtered.csv` in the project folder "
-        "and refresh."
+        "No bids in database yet. Data is automatically scraped every 12 hours "
+        "via GitHub Actions. If this is the first deployment, the next scheduled "
+        "run will populate the data."
     )
     st.stop()
 
@@ -485,7 +520,7 @@ edited_df = st.data_editor(
     disabled=["Status", "Bid ID", "Title", "Organization", "Qty",
               "Start Date", "End Date", "Value", "Scraped At"],
     hide_index=True,
-    width="stretch",
+    use_container_width=True,
     key="bid_table",
 )
 
@@ -547,6 +582,6 @@ with analytics_col2:
 
 st.markdown("---")
 st.caption(
-    f"GeM Bid Tracker • Last refreshed: {datetime.now().strftime('%d %b %Y, %I:%M %p')} "
-    f"• Database: {PROJECT_ROOT / 'database.db'}"
+    f"GeM Bid Tracker • Data last updated: {last_updated} "
+    f"• Auto-scraped every 12 hours via GitHub Actions"
 )

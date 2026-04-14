@@ -7,10 +7,10 @@ __pycache__/
 logs/
 scraper.log
 
-# Database (ephemeral on cloud, but keep locally)
+# Database (rebuilt at runtime from CSV)
 database.db
 
-# Large raw CSV (filtered CSV is kept for seeding)
+# Large raw CSV (too big to commit; filtered CSV IS committed)
 gem_bids_delhi.csv
 
 # Scraper state

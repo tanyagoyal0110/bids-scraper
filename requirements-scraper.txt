@@ -1,0 +1,4 @@
+# Dependencies for the scraper (used by GitHub Actions)
+# Streamlit Cloud only needs requirements.txt (no Playwright)
+playwright>=1.43.0
+pandas>=2.0.0
