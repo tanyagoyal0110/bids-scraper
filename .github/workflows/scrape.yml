@@ -1,65 +1,48 @@
-# GeM Bid Scraper — Automated Pipeline
-# =====================================
-# Runs the scraper + filter on a cron schedule,
-# then auto-commits updated CSV back to the repo.
-# Streamlit Community Cloud auto-redeploys on push.
+# GeM Bid Scraper — Auto-Push Updated Data
+# ==========================================
+# This workflow is triggered when the local scraper pushes
+# updated CSV data. It verifies and optionally re-filters.
+#
+# The SCRAPING itself runs locally (GeM blocks datacenter IPs).
+# Use run_scheduled.bat on your PC with Windows Task Scheduler.
 
-name: Scrape GeM Bids
+name: Process GeM Bids
 
 on:
-  # Run every 12 hours (at midnight and noon UTC)
-  schedule:
-    - cron: '0 0,12 * * *'
+  # Triggered when data is pushed (from local scraper)
+  push:
+    paths:
+      - 'gem_bids_filtered.csv'
 
-  # Allow manual trigger from GitHub UI
+  # Allow manual trigger
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  contents: read
 
 jobs:
-  scrape:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Python dependencies
+      - name: Verify CSV
         run: |
-          pip install --upgrade pip
-          pip install -r requirements-scraper.txt
+          if [ -f gem_bids_filtered.csv ]; then
+            LINES=$(wc -l < gem_bids_filtered.csv)
+            echo "✅ gem_bids_filtered.csv exists with $LINES lines"
+          else
+            echo "❌ gem_bids_filtered.csv not found"
+            exit 1
+          fi
 
-      - name: Install Playwright browsers
-        run: python -m playwright install --with-deps chromium
-
-      - name: Run scraper
-        run: python scraper.py --headless
-        env:
-          HEADLESS: 'true'
-
-      - name: Run filter
-        run: python filter_bids.py
-
-      - name: Check for changes
-        id: check
+      - name: Summary
         run: |
-          git diff --quiet gem_bids_filtered.csv 2>/dev/null && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
-
-      - name: Commit and push updated CSV
-        if: steps.check.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add gem_bids_filtered.csv
-          git commit -m "🔄 Auto-update: scraped $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git push
+          echo "### 📊 Data Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          LINES=$(wc -l < gem_bids_filtered.csv)
+          echo "- **Total rows:** $((LINES - 1)) bids" >> $GITHUB_STEP_SUMMARY
+          echo "- **Updated at:** $(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
